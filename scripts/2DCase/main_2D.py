@@ -1,23 +1,23 @@
-#!/usr/bin/env python
 # main.py
+
 # 导入环境和学习方法
-from env import mp500lwa4dEnv
+from env import mlRoboEnv
 from DDPG_dropout_small_net import DDPG  #_dropout
 import numpy as np
 import time
 
 # 设置全局变量
-MAX_EPISODES = 200
+MAX_EPISODES = 20000
 MAX_EP_STEPS = 500
-ON_TRAIN = True  # True or False
-LEARN_START = 2500
+ON_TRAIN = False  # True or False
+LEARN_START = 2500000
 ALPHA = LEARN_START / MAX_EP_STEPS
 BELTA = MAX_EPISODES - LEARN_START / MAX_EP_STEPS
 VAR = 4  # control exploration
 ACTION_NOISE = True
 
 # 设置环境
-env = mp500lwa4dEnv()
+env = mlRoboEnv()
 s_dim = env.state_dim
 a_dim = env.action_dim
 a_bound = env.action_bound[1]
@@ -74,10 +74,10 @@ def train():
         STU_FLAG = 0
         for j in range(MAX_EP_STEPS):
 
-            # env.render()                # 环境的渲染
+            env.render()                # 环境的渲染
             a = rl.choose_action(s)     # RL 选择动作
             # a = np.clip(np.random.normal(a, var), -2, 2)
-            a = np.clip(np.random.normal(a, var), -1, 1)
+            a = np.random.normal(a, var)
             if np.sum(np.absolute(a)) <= 0.0001:
                 STU_FLAG += 1
                 if STU_FLAG >= 150:
@@ -85,9 +85,8 @@ def train():
                     break
             else:
                 STU_FLAG = 0
-            a[2:8] = a[2:8] * np.pi/6
-            a[1] = a[1] * 2 * np.pi
-
+            a[0:3] = a[0:3] * np.pi/6
+            a[3] = a[3] * 20
             s_, r, done, info = env.step(a)   # 在环境中施加动作
 
             # DDPG 这种强化学习需要存放记忆库

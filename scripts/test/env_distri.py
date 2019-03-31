@@ -23,7 +23,12 @@ from tf.transformations import euler_from_quaternion, quaternion_from_euler
 import pyglet
 import numpy as np
 
-MAX_EP_STEPS = 500
+MAX_EP_STEPS = 50
+ARM_X_DOMAIN = 1.5  # 90.6
+ARM_Y_DOMAIN = 1.5  # 90.6
+X_DOMAIN = 4.4
+Y_DOMAIN = 4.4
+
 
 env_closer = closer.Closer()
 
@@ -62,31 +67,36 @@ class mp500lwa4dEnv(object):
     action_bound = np.array([-1., 1.])
     action_arm_bound_pitch = action_bound * np.pi/2  # 转动的角度范围
     action_arm_bound_raw = action_bound * np.pi  # 转动的角度范围
-    action_base_bound = action_bound * 170 + 200
+    action_base_bound = action_bound * 2.5
     goal = {'x': 2.15, 'y': 2.675, 'l': 0.2}  # 蓝色 goal 的 x,y 坐标和长度 l
     # goal = {'x': 215., 'y': 267.5, 'l': 20}
-    state_dim = 20  # 观测值
+    state_dim = 23  # 观测值
     action_dim = 9  # 动作
     s = np.zeros(state_dim)
-    room_long = 5
-    room_width = 5
+    room_long = 2.5
+    room_width = 2.5
     room_high = 2.5
-    
-    def __init__(self):
+    loc = [-2.5, 0.0, 2.5]
+    loop = 0
+    def __init__(self, seed_set, name):
         # base velocity publisher
-        self.pub_mobile = rospy.Publisher('/mp500lwa4d/mobile_base_controller/cmd_vel', Twist, queue_size=10)
-        self.pub_arm1 = rospy.Publisher('/mp500lwa4d/arm_1_joint_position_controller/command', Float64, queue_size=10)
-        self.pub_arm2 = rospy.Publisher('/mp500lwa4d/arm_2_joint_position_controller/command', Float64, queue_size=10)
-        self.pub_arm3 = rospy.Publisher('/mp500lwa4d/arm_3_joint_position_controller/command', Float64, queue_size=10)
-        self.pub_arm4 = rospy.Publisher('/mp500lwa4d/arm_4_joint_position_controller/command', Float64, queue_size=10)
-        self.pub_arm5 = rospy.Publisher('/mp500lwa4d/arm_5_joint_position_controller/command', Float64, queue_size=10)
-        self.pub_arm6 = rospy.Publisher('/mp500lwa4d/arm_6_joint_position_controller/command', Float64, queue_size=10)
-        self.pub_arm7 = rospy.Publisher('/mp500lwa4d/arm_7_joint_position_controller/command', Float64, queue_size=10)
+        self.name = name
+        print('node %s robot_env initialing...' % self.name)
+        self.pub_mobile = rospy.Publisher('/'+self.name+'/mp500lwa4d/mobile_base_controller/cmd_vel', Twist, queue_size=10)
+        self.pub_arm1 = rospy.Publisher('/'+self.name+'/mp500lwa4d/arm_1_joint_position_controller/command', Float64, queue_size=10)
+        self.pub_arm2 = rospy.Publisher('/'+self.name+'/mp500lwa4d/arm_2_joint_position_controller/command', Float64, queue_size=10)
+        self.pub_arm3 = rospy.Publisher('/'+self.name+'/mp500lwa4d/arm_3_joint_position_controller/command', Float64, queue_size=10)
+        self.pub_arm4 = rospy.Publisher('/'+self.name+'/mp500lwa4d/arm_4_joint_position_controller/command', Float64, queue_size=10)
+        self.pub_arm5 = rospy.Publisher('/'+self.name+'/mp500lwa4d/arm_5_joint_position_controller/command', Float64, queue_size=10)
+        self.pub_arm6 = rospy.Publisher('/'+self.name+'/mp500lwa4d/arm_6_joint_position_controller/command', Float64, queue_size=10)
+        self.pub_arm7 = rospy.Publisher('/'+self.name+'/mp500lwa4d/arm_7_joint_position_controller/command', Float64, queue_size=10)
 
-        self.pub_model_state = rospy.Publisher('/gazebo/set_model_state', ModelState, queue_size=10)
+        self.pub_model_state = rospy.Publisher('/'+self.name+'/gazebo/set_model_state', ModelState, queue_size=10)
         
-        rospy.init_node('robot_env', anonymous=False)
+        rospy.init_node(self.name+'robot_env', anonymous=False)
         rate = rospy.Rate(50)  # 50hz
+
+        np.random.seed(seed_set)
         
         # arm position publisher
         # moveit_commander.roscpp_initialize(sys.argv)
@@ -96,17 +106,8 @@ class mp500lwa4dEnv(object):
         # self.arm.set_joint_value_target([0, 0, 0, 0, 0, 0, 0])
         # self.arm.go()
 
-        rospy.sleep(10)
-       
-        
-        # init service to get links position
-        resp_mobile = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
-        resp_arm = rospy.ServiceProxy('/gazebo/get_link_state', GetLinkState)
-        self.resp_arm1_coordinates = resp_arm('arm_1_link', 'world')
-        self.resp_arm3_coordinates = resp_arm('arm_3_link', 'world')
-        self.resp_arm5_coordinates = resp_arm('arm_5_link', 'world')
-        self.resp_arm7_coordinates = resp_arm('arm_7_link', 'world')
-
+        time.sleep(10)
+    
         # init robot model state
         self.model_state_robot = ModelState()
         self.model_state_robot.model_name = 'mp500lwa4d'
@@ -144,7 +145,7 @@ class mp500lwa4dEnv(object):
         self.pub_arm5.publish(self.arm_joint_positions[4])
         self.pub_arm6.publish(self.arm_joint_positions[5])
         self.pub_arm7.publish(self.arm_joint_positions[6])
-        rospy.sleep(5)
+        time.sleep(5)
 
   
         
@@ -154,11 +155,13 @@ class mp500lwa4dEnv(object):
         self.arm3_pose = [0, 0, 0]
         self.arm5_pose = [0, 0, 0]
         self.arm7_pose = [0, 0, 0]
+        self.robot_orientation = [0, 0, 0, 0]
+        self.robot_position = [0, 0, 0]
         self.dist_ = 0
         self.STU_FLAG = 0
         self.on_goal = 0
         self.t = 0
-
+        print('node %s robot_env initialization done' %self.name)
         # goal = {'x': 215., 'y': 267.5, 'z': 267.5, 'l': 20}
 
     def step(self, action):
@@ -195,12 +198,11 @@ class mp500lwa4dEnv(object):
             info (dict): contains auxiliary diagnostic information (helpful for debugging, and sometimes learning)
         """
         done = False
-        dt = 1 # time step equal to 0.1s
+        dt = 1 # time step equal to 1s
         info = {}
-        done = False
         r_angle = 0
-        self.base_vel.linear.x = action[0]
-        self.base_vel.angular.z = 0
+        r_boundary = 0
+        Loc_robot = [0, 0] #distance to boundery
         
         self.arm_joint_positions += action[2:9]
 
@@ -211,7 +213,8 @@ class mp500lwa4dEnv(object):
         self.arm_joint_positions[4] = np.clip(self.arm_joint_positions[4], *self.action_arm_bound_raw)
         self.arm_joint_positions[5] = np.clip(self.arm_joint_positions[5], *self.action_arm_bound_pitch)
         self.arm_joint_positions[6] = np.clip(self.arm_joint_positions[6], *self.action_arm_bound_raw)
-
+        
+        # publish arm joints position
         self.pub_arm1.publish(self.arm_joint_positions[0])
         self.pub_arm2.publish(self.arm_joint_positions[1])
         self.pub_arm3.publish(self.arm_joint_positions[2])
@@ -219,48 +222,107 @@ class mp500lwa4dEnv(object):
         self.pub_arm5.publish(self.arm_joint_positions[4])
         self.pub_arm6.publish(self.arm_joint_positions[5])
         self.pub_arm7.publish(self.arm_joint_positions[6])
-        rospy.sleep(1)
-
-        t_1 = rospy.get_time()
-        t_2 = rospy.get_time()
+        time.sleep(2)
+ 
         # publish base velocity
-        while t_2 - t_1 <= dt and not rospy.is_shutdown():
-            self.pub_mobile.publish(self.base_vel) 
-            t_2 = rospy.get_time()
-
         self.base_vel.linear.x = 0
         self.base_vel.angular.z = action[1]
-        t_1 = rospy.get_time()
-        t_2 = rospy.get_time()
+        t_1 = time.clock()
+        t_2 = time.clock()
         while t_2 - t_1 <= dt and not rospy.is_shutdown():
             self.pub_mobile.publish(self.base_vel) 
-            t_2 = rospy.get_time()
-        # publish arm joints position
+            t_2 = time.clock()
+
+        self.base_vel.linear.x = action[0]
+        self.base_vel.angular.z = 0
+        t_1 = time.clock()
+        t_2 = time.clock()
+        while t_2 - t_1 <= dt and not rospy.is_shutdown():
+            self.pub_mobile.publish(self.base_vel) 
+            t_2 = time.clock()
+        time.sleep(1)
         
-        
+        # get model state
+        self.resp_robot_state, self.resp_arm1_coordinates,  self.resp_arm3_coordinates,  self.resp_arm5_coordinates,  self.resp_arm7_coordinates = self.read_model_state()
+        self.robot_orientation[0]  =  self.resp_robot_state.pose.orientation.x
+        self.robot_orientation[1]  =  self.resp_robot_state.pose.orientation.y
+        self.robot_orientation[2]  =  self.resp_robot_state.pose.orientation.z
+        self.robot_orientation[3]  =  self.resp_robot_state.pose.orientation.w
+
+        Loc_robot[0] = (self.room_long - abs(self.resp_robot_state.pose.position.x)) / (X_DOMAIN/2)
+        Loc_robot[1] = (self.room_width - abs(self.resp_robot_state.pose.position.y)) / (Y_DOMAIN/2)
+        if abs(Loc_robot[0]) >= 0.2: 
+            if abs(Loc_robot[1]) >= 0.2:
+                r_boundary = 0
+            else:
+                r_boundary = -1
+        else:
+            r_boundary = -1
+
         self.arm1_pose = [self.resp_arm1_coordinates.link_state.pose.position.x, self.resp_arm1_coordinates.link_state.pose.position.y, self.resp_arm1_coordinates.link_state.pose.position.z]
         self.arm3_pose = [self.resp_arm3_coordinates.link_state.pose.position.x, self.resp_arm3_coordinates.link_state.pose.position.y, self.resp_arm3_coordinates.link_state.pose.position.z]
         self.arm5_pose = [self.resp_arm5_coordinates.link_state.pose.position.x, self.resp_arm5_coordinates.link_state.pose.position.y, self.resp_arm5_coordinates.link_state.pose.position.z]
         self.arm7_pose = [self.resp_arm7_coordinates.link_state.pose.position.x, self.resp_arm7_coordinates.link_state.pose.position.y, self.resp_arm7_coordinates.link_state.pose.position.z]
 
         finger = self.arm7_pose
+#-------------- dist1 ------------------
+        dist1 = [(self.goal['x'] - self.arm1_pose[0]), (self.goal['y'] - self.arm1_pose[1]), (self.goal['z'] - self.arm1_pose[2]) / self.room_high]
+        if abs(dist1[0]) <= ARM_X_DOMAIN:
+            dist1[0] = dist1[0] / ARM_X_DOMAIN
+        else:
+            dist1[0] = ((abs(dist1[0]) - ARM_X_DOMAIN) / (self.room_long - ARM_X_DOMAIN) + 1) * (dist1[0] / abs(dist1[0]))
 
-        dist1 = [(self.goal['x'] - self.arm1_pose[0]) / self.room_long, (self.goal['y'] - self.arm1_pose[1]) / self.room_width, (self.goal['z'] - self.arm1_pose[2]) / self.room_high]
+        if abs(dist1[1]) <= ARM_Y_DOMAIN:
+            dist1[1] = dist1[1] / ARM_Y_DOMAIN
+        else:
+            dist1[1] = ((abs(dist1[1]) - ARM_Y_DOMAIN) / (self.room_width - ARM_Y_DOMAIN) + 1) * (dist1[1] / abs(dist1[1]))
         dist1_ = np.sqrt(dist1[0] ** 2 + dist1[1] ** 2 + dist1[2] ** 2)
-        dist2 = [(self.goal['x'] - self.arm3_pose[0]) / self.room_long, (self.goal['y'] - self.arm3_pose[1]) / self.room_width, (self.goal['z'] - self.arm3_pose[2]) / self.room_high]
-        dist3 = [(self.goal['x'] - self.arm5_pose[0]) / self.room_long, (self.goal['y'] - self.arm5_pose[1]) / self.room_width, (self.goal['z'] - self.arm5_pose[2]) / self.room_high]
+#-------------- dist2 -------------------
+        dist2 = [(self.goal['x'] - self.arm3_pose[0]), (self.goal['y'] - self.arm3_pose[1]), (self.goal['z'] - self.arm3_pose[2]) / self.room_high]
+        if abs(dist2[0]) <= ARM_X_DOMAIN:
+            dist2[0] = dist2[0] / ARM_X_DOMAIN
+        else:
+            dist2[0] = ((abs(dist2[0]) - ARM_X_DOMAIN) / (self.room_long - ARM_X_DOMAIN) + 1) * (dist2[0] / abs(dist2[0]))
+
+        if abs(dist2[1]) <= ARM_Y_DOMAIN:
+            dist2[1] = dist2[1] / ARM_Y_DOMAIN
+        else:
+            dist2[1] = ((abs(dist2[1]) - ARM_Y_DOMAIN) / (self.room_width - ARM_Y_DOMAIN) + 1) * (dist2[1] / abs(dist2[1]))
+#------------- dist3 ---------------------
+        dist3 = [(self.goal['x'] - self.arm5_pose[0]), (self.goal['y'] - self.arm5_pose[1]), (self.goal['z'] - self.arm5_pose[2]) / self.room_high]
+        if abs(dist3[0]) <= ARM_X_DOMAIN:
+            dist3[0] = dist3[0] / ARM_X_DOMAIN
+        else:
+            dist3[0] = ((abs(dist3[0]) - ARM_X_DOMAIN) / (self.room_long - ARM_X_DOMAIN) + 1) * (dist3[0] / abs(dist3[0]))
+
+        if abs(dist3[1]) <= ARM_Y_DOMAIN:
+            dist3[1] = dist3[1] / ARM_Y_DOMAIN
+        else:
+            dist3[1] = ((abs(dist3[1]) - ARM_Y_DOMAIN) / (self.room_width - ARM_Y_DOMAIN) + 1) * (dist3[1] / abs(dist3[1]))
         dist3_ = np.sqrt(dist3[0] ** 2 + dist3[1] ** 2 + dist3[2] ** 2)
-        dist4 = [(self.goal['x'] - finger[0]) / self.room_long, (self.goal['y'] - finger[1]) / 74.5, (self.goal['z'] - finger[2]) / 74.5]
+#------------- dist4 ---------------------
+        dist4 = [(self.goal['x'] - finger[0]), (self.goal['y'] - finger[1]), (self.goal['z'] - finger[2]) / self.room_high]
+        if abs(dist4[0]) <= ARM_X_DOMAIN:
+            dist4[0] = dist4[0] / ARM_X_DOMAIN
+        else:
+            dist4[0] = ((abs(dist4[0]) - ARM_X_DOMAIN) / (self.room_long - ARM_X_DOMAIN) + 1) * (dist4[0] / abs(dist4[0]))
+
+        if abs(dist4[1]) <= ARM_Y_DOMAIN:
+            dist4[1] = dist4[1] / ARM_Y_DOMAIN
+        else:
+            dist4[1] = ((abs(dist4[1]) - ARM_Y_DOMAIN) / (self.room_width - ARM_Y_DOMAIN) + 1) * (dist4[1] / abs(dist4[1]))
         dist = np.sqrt(dist4[0] ** 2 + dist4[1] ** 2 + dist4[2] ** 2)
         # Reward
-        r = (self.dist_ - dist) * 10
+        r = (self.dist_ - dist) / self.oridist * 200
+        # print ('dist_ is: %.3f | dist is: %.3f | r is: %.3f' % (self.dist_, dist, r))
         r += r_angle
-        r -= 1 / MAX_EP_STEPS * 10
+        r += r_boundary
+        r -= 1 / MAX_EP_STEPS * 100
 
         self.dist_ = dist
 
         if dist3_ >= dist:
-            r += 0.004
+            r += 1.0
         # if dist1_ < self.radius:
         #     r += 0.004
         # 根据 finger 和 goal 的坐标得出 done and reward
@@ -270,9 +332,9 @@ class mp500lwa4dEnv(object):
 
                     # r = (self.dist_ - dist) * 10
                     self.on_goal += 1
-                    if self.on_goal > 100:
+                    if self.on_goal > 5:
                         done = True
-                        r += 10 * self.on_goal
+                        r += 50 * self.on_goal
 
                         if self.goal['x'] - self.goal['l'] / 10 < finger[0] < self.goal['x'] + self.goal['l'] / 10:
                             if self.goal['y'] - self.goal['l'] / 10 < finger[1] < self.goal['y'] + self.goal['l'] / 10:
@@ -291,7 +353,7 @@ class mp500lwa4dEnv(object):
 
 
         # state
-        observation = np.concatenate((self.arm_joint_positions, dist1, dist2, dist3, dist4, [1. if self.on_goal else 0.]))
+        observation = np.concatenate((self.arm_joint_positions, self.robot_orientation, Loc_robot, dist1, dist3, dist4, [1. if self.on_goal else 0.]))
         return observation, r, done, info
 
         # raise NotImplementedError
@@ -301,11 +363,46 @@ class mp500lwa4dEnv(object):
         Returns: observation (object): the initial observation of the
             space.
         """
-        self.goal['x'] = np.random.rand() * 2.50
-        self.goal['y'] = np.random.rand() * 2.50
-        self.goal['z'] = np.random.rand() * 1.00 + 1.00
-        self.arm_joint_positions = (np.random.rand(7) - 0.5) * 2 * np.pi/2
+        Loc_robot = [0, 0] #distance to boundery
+        if self.loop < 18:
+            if self.loop < 6:
+                self.goal['x'] = self.loc[0]
+                self.goal['y'] = self.loc[self.loop % 3]
+                if self.loop < 3:
+                    self.goal['z'] = self.loc[1]
+                else:
+                    self.goal['z'] = self.loc[2]
+            elif self.loop >= 12:
+                self.goal['x'] = self.loc[2]
+                self.goal['y'] = self.loc[self.loop % 3]
+                if self.loop < 15:
+                    self.goal['z'] = self.loc[1]
+                else:
+                    self.goal['z'] = self.loc[2]
+            else:
+                self.goal['x'] = self.loc[1]
+                self.goal['y'] = self.loc[self.loop % 3]
+                if self.loop < 9:
+                    self.goal['z'] = self.loc[1]
+                else:
+                    self.goal['z'] = self.loc[2]
+            
+            self.arm_joint_positions = [0, 0, 0, 0, 0, 0, 0]
+        else:
+            self.goal['x'] = 0
+            self.goal['y'] = 0
+            self.goal['z'] = np.random.rand() * 2.50
+            self.arm_joint_positions = (np.random.rand(7) - 0.5) * 2 * np.pi/2
+            self.model_state_robot.pose.position.x = (np.random.rand() - 0.5) * X_DOMAIN 
+            self.model_state_robot.pose.position.y = (np.random.rand() - 0.5) * Y_DOMAIN 
+            self.model_state_robot.pose.position.z = 0
+            quaternion = quaternion_from_euler(0, 0, (np.random.rand() - 0.5) * 2 * np.pi)
+            self.model_state_robot.pose.orientation.x = quaternion[0]
+            self.model_state_robot.pose.orientation.y = quaternion[1]
+            self.model_state_robot.pose.orientation.z = quaternion[2]
+            self.model_state_robot.pose.orientation.w = quaternion[3]
         
+        self.loop += 1
         # goal_size = [0.1, 0.05, 0.05]
         # goal_pose = PoseStamped()
         # goal_pose.header.frame_id = REFERENCE_FRAME
@@ -330,33 +427,77 @@ class mp500lwa4dEnv(object):
         self.model_state_goal.pose.position.x = self.goal['x']
         self.model_state_goal.pose.position.y = self.goal['y']
         self.model_state_goal.pose.position.z = self.goal['z']
-        # self.model_state_goal.pose.orientation.x = 0
-        # self.model_state_goal.pose.orientation.y = 0
-        # self.model_state_goal.pose.orientation.z = 0
-        # self.model_state_goal.pose.orientation.w = 0
         self.model_state_goal.reference_frame = 'world'
         self.pub_model_state.publish(self.model_state_goal)
-        rospy.sleep(5)
+        time.sleep(10)
         
+        self.resp_robot_state, self.resp_arm1_coordinates,  self.resp_arm3_coordinates,  self.resp_arm5_coordinates,  self.resp_arm7_coordinates = self.read_model_state()
+        self.robot_orientation[0]  =  self.resp_robot_state.pose.orientation.x
+        self.robot_orientation[1]  =  self.resp_robot_state.pose.orientation.y
+        self.robot_orientation[2]  =  self.resp_robot_state.pose.orientation.z
+        self.robot_orientation[3]  =  self.resp_robot_state.pose.orientation.w
+        Loc_robot[0] = (self.room_long - abs(self.resp_robot_state.pose.position.x)) / (X_DOMAIN/2)
+        Loc_robot[1] = (self.room_width - abs(self.resp_robot_state.pose.position.y)) / (Y_DOMAIN/2)
+
         self.arm1_pose = [self.resp_arm1_coordinates.link_state.pose.position.x, self.resp_arm1_coordinates.link_state.pose.position.y, self.resp_arm1_coordinates.link_state.pose.position.z]
         self.arm3_pose = [self.resp_arm3_coordinates.link_state.pose.position.x, self.resp_arm3_coordinates.link_state.pose.position.y, self.resp_arm3_coordinates.link_state.pose.position.z]
         self.arm5_pose = [self.resp_arm5_coordinates.link_state.pose.position.x, self.resp_arm5_coordinates.link_state.pose.position.y, self.resp_arm5_coordinates.link_state.pose.position.z]
         self.arm7_pose = [self.resp_arm7_coordinates.link_state.pose.position.x, self.resp_arm7_coordinates.link_state.pose.position.y, self.resp_arm7_coordinates.link_state.pose.position.z]
 
         finger = self.arm7_pose
+#-------------- dist1 ------------------
+        dist1 = [(self.goal['x'] - self.arm1_pose[0]), (self.goal['y'] - self.arm1_pose[1]), (self.goal['z'] - self.arm1_pose[2]) / self.room_high]
+        if abs(dist1[0]) <= ARM_X_DOMAIN:
+            dist1[0] = dist1[0] / ARM_X_DOMAIN
+        else:
+            dist1[0] = ((abs(dist1[0]) - ARM_X_DOMAIN) / (self.room_long - ARM_X_DOMAIN) + 1) * (dist1[0] / abs(dist1[0]))
 
-        dist1 = [(self.goal['x'] - self.arm1_pose[0]) / 260.8, (self.goal['y'] - self.arm1_pose[1]) / 74.5, (self.goal['z'] - self.arm1_pose[2]) / 74.5]
+        if abs(dist1[1]) <= ARM_Y_DOMAIN:
+            dist1[1] = dist1[1] / ARM_Y_DOMAIN
+        else:
+            dist1[1] = ((abs(dist1[1]) - ARM_Y_DOMAIN) / (self.room_width - ARM_Y_DOMAIN) + 1) * (dist1[1] / abs(dist1[1]))
         dist1_ = np.sqrt(dist1[0] ** 2 + dist1[1] ** 2 + dist1[2] ** 2)
-        dist2 = [(self.goal['x'] - self.arm3_pose[0]) / 260.8, (self.goal['y'] - self.arm3_pose[1]) / 74.5, (self.goal['z'] - self.arm3_pose[2]) / 74.5]
-        dist3 = [(self.goal['x'] - self.arm5_pose[0]) / 260.8, (self.goal['y'] - self.arm5_pose[1]) / 74.5, (self.goal['z'] - self.arm5_pose[2]) / 74.5]
+#-------------- dist2 -------------------
+        dist2 = [(self.goal['x'] - self.arm3_pose[0]), (self.goal['y'] - self.arm3_pose[1]), (self.goal['z'] - self.arm3_pose[2]) / self.room_high]
+        if abs(dist2[0]) <= ARM_X_DOMAIN:
+            dist2[0] = dist2[0] / ARM_X_DOMAIN
+        else:
+            dist2[0] = ((abs(dist2[0]) - ARM_X_DOMAIN) / (self.room_long - ARM_X_DOMAIN) + 1) * (dist2[0] / abs(dist2[0]))
+
+        if abs(dist2[1]) <= ARM_Y_DOMAIN:
+            dist2[1] = dist2[1] / ARM_Y_DOMAIN
+        else:
+            dist2[1] = ((abs(dist2[1]) - ARM_Y_DOMAIN) / (self.room_width - ARM_Y_DOMAIN) + 1) * (dist2[1] / abs(dist2[1]))
+#------------- dist3 ---------------------
+        dist3 = [(self.goal['x'] - self.arm5_pose[0]), (self.goal['y'] - self.arm5_pose[1]), (self.goal['z'] - self.arm5_pose[2]) / self.room_high]
+        if abs(dist3[0]) <= ARM_X_DOMAIN:
+            dist3[0] = dist3[0] / ARM_X_DOMAIN
+        else:
+            dist3[0] = ((abs(dist3[0]) - ARM_X_DOMAIN) / (self.room_long - ARM_X_DOMAIN) + 1) * (dist3[0] / abs(dist3[0]))
+
+        if abs(dist3[1]) <= ARM_Y_DOMAIN:
+            dist3[1] = dist3[1] / ARM_Y_DOMAIN
+        else:
+            dist3[1] = ((abs(dist3[1]) - ARM_Y_DOMAIN) / (self.room_width - ARM_Y_DOMAIN) + 1) * (dist3[1] / abs(dist3[1]))
         dist3_ = np.sqrt(dist3[0] ** 2 + dist3[1] ** 2 + dist3[2] ** 2)
-        dist4 = [(self.goal['x'] - finger[0]) / 260.8, (self.goal['y'] - finger[1]) / 74.5, (self.goal['z'] - finger[2]) / 74.5]
+#------------- dist4 ---------------------
+        dist4 = [(self.goal['x'] - finger[0]), (self.goal['y'] - finger[1]), (self.goal['z'] - finger[2]) / self.room_high]
+        if abs(dist4[0]) <= ARM_X_DOMAIN:
+            dist4[0] = dist4[0] / ARM_X_DOMAIN
+        else:
+            dist4[0] = ((abs(dist4[0]) - ARM_X_DOMAIN) / (self.room_long - ARM_X_DOMAIN) + 1) * (dist4[0] / abs(dist4[0]))
+
+        if abs(dist4[1]) <= ARM_Y_DOMAIN:
+            dist4[1] = dist4[1] / ARM_Y_DOMAIN
+        else:
+            dist4[1] = ((abs(dist4[1]) - ARM_Y_DOMAIN) / (self.room_width - ARM_Y_DOMAIN) + 1) * (dist4[1] / abs(dist4[1])) 
         dist = np.sqrt(dist4[0] ** 2 + dist4[1] ** 2 + dist4[2] ** 2)
         # Reward
         # r = (self.dist_ - dist) * 10
         # r += r_angle
         # r -= 1 / MAX_EP_STEPS * 10
-
+        
+        self.oridist = dist
         self.dist_ = dist
 
         # if dist3_ >= dist:
@@ -391,9 +532,23 @@ class mp500lwa4dEnv(object):
 
 
         # state
-        observation = np.concatenate((self.arm_joint_positions, dist1, dist2, dist3, dist4, [1. if self.on_goal else 0.]))
+        observation = np.concatenate((self.arm_joint_positions, self.robot_orientation, Loc_robot, dist1, dist3, dist4, [1. if self.on_goal else 0.]))
         return observation
         # raise NotImplementedError
+
+    def read_model_state(self):
+        try:
+            resp_mobile = rospy.ServiceProxy('/'+self.name+'/gazebo/get_model_state', GetModelState)
+            resp_arm = rospy.ServiceProxy('/'+self.name+'/gazebo/get_link_state', GetLinkState)
+            resp_robot_state = resp_mobile('mp500lwa4d', 'world')
+            resp_arm1_coordinates = resp_arm('arm_1_link', 'world')
+            resp_arm3_coordinates = resp_arm('arm_3_link', 'world')
+            resp_arm5_coordinates = resp_arm('arm_5_link', 'world')
+            resp_arm7_coordinates = resp_arm('arm_7_link', 'world')
+
+        except rospy.ServiceException as e:
+            rospy.loginfo("Get Model State service call failed:  {0}".format(e))
+        return resp_robot_state, resp_arm1_coordinates,  resp_arm3_coordinates,  resp_arm5_coordinates,  resp_arm7_coordinates
 
     def render(self, mode='human'):
         """Renders the environment.
